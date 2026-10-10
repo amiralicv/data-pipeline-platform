@@ -1,4 +1,9 @@
-from datetime import time
+from abc import ABC, abstractmethod
 
 
-print(time.hour)
+class Source(ABC):
+    name: str
+
+    @abstractmethod
+    def fetch(self) -> dict:
+        pass
