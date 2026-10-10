@@ -11,6 +11,6 @@ class OpenMeteoBase(Source):
         self.params = params
 
     def fetch(self) -> dict:
-        resp = requests.get(self.base_url, params=self.params, timeout=10)
-        resp.raise_for_status()
-        return resp.json()
+        response = requests.get(self.base_url, params=self.params, timeout=10)
+        response.raise_for_status()
+        return response.json()
