@@ -1,6 +1,0 @@
-OPEN_METEO_FORECAST = "https://api.open-meteo.com/v1/forecast"
-OPEN_METEO_ARCHIVE = "https://archive-api.open-meteo.com/v1/archive"
-OPEN_METEO_GEOCODING = "https://geocoding-api.open-meteo.com/v1/search"
-OPEN_METEO_AIR_QUALITY = "https://air-quality-api.open-meteo.com/v1/air-quality"
-OPEN_METEO_MARINE = "https://marine-api.open-meteo.com/v1/marine"
-OPEN_METEO_CUSTOMER = "https://customer-api.open-meteo.com/v1/forecast"
