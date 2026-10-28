@@ -1,6 +1,6 @@
 import requests
 
-from data_pipeline_platform.ingestion.base import Source
+from weather_data_api.ingestion.base import Source
 
 
 class OpenMeteoBase(Source):
