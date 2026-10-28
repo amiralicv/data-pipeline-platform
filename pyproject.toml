@@ -1,7 +1,7 @@
 [project]
-name = "data-pipeline-platform"
+name = "weather-data-api"
 version = "0.1.0"
-description = "Add your description here"
+description = "Managing External APIs in fastapi"
 readme = "README.md"
 authors = [
     { name = "Amirali Abbasi", email = "abbasigudarzi@gmail.com" }
@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.scripts]
-data-pipeline-platform = "data_pipeline_platform:main"
+weather-data-api = "weather_data_api:main"
 
 [build-system]
 requires = ["uv_build>=0.12.13,<0.13.0"]
