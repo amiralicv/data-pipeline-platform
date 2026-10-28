@@ -1,63 +1,100 @@
-# data-pipeline-platform
+# weather-data-api
 
-Batch ETL pipelines that ingest public REST APIs into a PostgreSQL star schema.
-Orchestrated with Airflow, run locally with Docker.
+A FastAPI service that collects weather data from the public [Open-Meteo](https://open-meteo.com/) APIs, validates it, stores it in PostgreSQL, and serves it through a clean REST API.
 
-**Sources:** Open-Meteo (more planned)
-**Stack:** Python 3.12 · Airflow · PostgreSQL · Docker · uv
+**Stack:** Python 3.14 · FastAPI · PostgreSQL · SQLAlchemy · Pydantic · Docker · uv · pytest
 
-> **Status: in progress.** See the [Roadmap](#roadmap) for what works today.
+> **Status: in progress.** The [Roadmap](#roadmap) shows exactly what works today.
 
 ---
 
-## Why this project exists
+## Goal
 
-I'm a Java/Spring Boot backend developer moving into data engineering. I built this to practice the core of the job end to end: reliable ingestion, dimensional modeling, data quality checks, and scheduled orchestration. Every design decision is written down in [Design decisions](#design-decisions) so the reasoning is visible, not just the code.
+Build a small but complete backend service, the kind a real team would run in production:
 
-## Architecture
+- **Collect** data from an external API reliably (timeouts, errors, retries).
+- **Validate** it before it is stored, so bad data never reaches the database.
+- **Store** it in PostgreSQL with a schema designed for the queries the API serves.
+- **Serve** it through a typed, documented REST API with tests.
+
+Weather data is the subject because it is free, updates constantly and comes in many shapes (forecast, history, air quality, marine). That makes it a good stand-in for any external data a backend has to depend on.
+
+## How it works
 
 ```
-            +-----------+     +-----------+     +-----------+     +------------+
- REST API-->|  Extract  |---->| Transform |---->|  Quality  |---->|    Load    |
-            | (per src) |     | (per src) |     |  checks   |     | (shared)   |
-            +-----+-----+     +-----------+     +-----------+     +------+-----+
-                  |                                                      |
-                  v                                                      v
-          raw.<source>_responses                               PostgreSQL star schema
-          (raw JSON, kept for replay)                          (fact + dimension tables)
-
-            Airflow schedules one DAG per source, daily.
+ Open-Meteo APIs ──► Fetch ──► Transform ──► Validate ──► PostgreSQL
+                    (per source)                              │
+                                                              ▼
+                                                  FastAPI  (REST + OpenAPI docs)
 ```
 
-Only **extract** and **transform** differ per API. Quality checks, loading, and scheduling are shared and written once.
+1. **Fetch:** one small class per Open-Meteo API, all sharing a base class and a registry.
+2. **Transform:** turns the API's parallel arrays (`time[]`, `temperature_2m[]`, …) into rows.
+3. **Validate:** rejects null timestamps, duplicates and impossible values before saving.
+4. **Store:** idempotent upserts, so fetching the same day twice updates instead of duplicating.
+5. **Serve:** endpoints read from PostgreSQL, never from Open-Meteo directly, so the API stays fast and works even when the upstream API is down.
+
+## API
+
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| `GET` | `/health` | Service and database status |
+| `GET` | `/sources` | Available data sources from the registry |
+| `GET` | `/cities` | Cities that have stored data |
+| `GET` | `/weather/{city}/hourly?from=&to=` | Hourly readings for a date range |
+| `GET` | `/weather/{city}/daily?from=&to=` | Daily min, max and average |
+| `POST` | `/ingest/{source}?city=` | Fetch fresh data for a city and store it |
+
+Interactive docs are generated automatically at `/docs` once the service runs.
 
 ## Data model
 
-<!-- Replace with your real schema once designed. Keep an ER diagram or table list here. -->
+| Table | Purpose | Unique key |
+| --- | --- | --- |
+| `cities` | Name, country, latitude, longitude | `name, country` |
+| `weather_hourly` | One reading per city per hour | `city_id, ts` |
+| `ingestion_runs` | Log of each fetch: source, city, row count, status, time | `id` |
 
-| Table | Type | Grain / purpose |
-|---|---|---|
-| `fact_<name>` | Fact | _one row per ... (define the grain)_ |
-| `dim_<name>` | Dimension | _describes ..._ |
-| `dim_date` | Dimension | Calendar attributes |
+`weather_hourly` has a unique key on `(city_id, ts)`, which is what makes re-running an ingest safe.
+
+## Design decisions
+
+- **The API reads from the database, not from Open-Meteo.** Responses are fast and predictable, and the service keeps working if the upstream API is slow or down.
+- **Idempotent upserts** (`INSERT … ON CONFLICT DO UPDATE`). Retries and repeated requests never create duplicate rows.
+- **Validation before storage.** Bad rows are rejected with a clear error instead of being saved and discovered later.
+- **One registry for all sources.** Adding a new Open-Meteo API means adding one small class; the `/ingest/{source}` endpoint picks it up automatically.
+- **Pydantic schemas at the edges.** Request parameters and responses are typed and validated, and that same typing produces the OpenAPI docs.
+
+## Project structure
+
+```
+weather-data-api/
+  src/weather_data_api/
+    api/            # FastAPI app, routers, Pydantic schemas
+    ingestion/      # one class per Open-Meteo API + registry
+    transform/      # API response → rows
+    quality/        # validation rules
+    db/             # SQLAlchemy models, session, upserts
+  tests/
+  docker-compose.yaml
+  pyproject.toml
+```
 
 ## Quickstart
 
-**Requirements:** Docker, Docker Compose, [uv](https://docs.astral.sh/uv/)
+> Fill this in only once `docker compose up` works from a fresh clone.
 
 ```bash
-git clone https://github.com/amiraliverse/data-pipeline-platform.git
-cd data-pipeline-platform
-cp .env.example .env        # then edit the values
+git clone https://github.com/amiralicv/weather-data-api.git
+cd weather-data-api
+cp .env.example .env
 docker compose up -d
 ```
 
-- Airflow UI: http://localhost:8080
-- PostgreSQL: `localhost:5432`
+- API: http://localhost:8000
+- Docs: http://localhost:8000/docs
 
-> Only keep this section if `docker compose up` really works from a fresh clone. Test it in an empty folder before you push.
-
-**Local development (without Docker):**
+**Local development:**
 
 ```bash
 uv sync
@@ -65,70 +102,27 @@ uv run pytest
 uv run ruff check .
 ```
 
-## Project structure
-
-```
-data-pipeline-platform/
-  dags/                  # Airflow DAGs (one per source, generated from the registry)
-  src/data_pipeline_platform/
-    ingestion/           # one module per API
-    transform/
-    quality/             # data quality checks
-    load/                # idempotent loading into PostgreSQL
-  sql/                   # schema and star-schema DDL
-  tests/
-  docker-compose.yml
-  pyproject.toml
-  uv.lock
-```
-
-## Design decisions
-
-- **Idempotent loads.** Re-running a day replaces that day's data instead of duplicating it, so retries and backfills are safe.
-- **Incremental ingestion.** Each run fetches only the date it is responsible for.
-- **Raw data is stored before transformation.** A transform bug can be fixed and replayed without calling the API again.
-- **Star schema.** Chosen for analytical queries: facts hold measurements, dimensions hold descriptive attributes.
-- **Quality checks run before load.** Nulls, duplicates, and row counts are validated so bad data never reaches the warehouse.
-- **Airflow runs from its official image; my code is a separate uv project.** Airflow's pinned dependency tree conflicts with normal application dependencies, so they are kept apart.
-
-## Adding a new source
-
-1. Create `src/data_pipeline_platform/ingestion/<source>.py` with `extract` and `transform`.
-2. Register it in the source registry.
-3. Add its config (URL, parameters, schedule).
-
-The DAG for the new source is generated automatically.
-
-_(Keep this section only after the second source really works this way.)_
-
-## Data quality checks
-
-| Check | Rule |
-|---|---|
-| Not null | Key columns must be present |
-| No duplicates | Grain columns are unique per load |
-| Row count | Load must not be empty or drop sharply versus the previous run |
-
 ## Roadmap
 
-- [ ] Ingestion from first API (Open-Meteo)
-- [ ] Raw layer stored in PostgreSQL
-- [ ] Star schema (facts + dimensions) with indexes
-- [ ] Idempotent, incremental load
-- [ ] Data quality checks
-- [ ] Airflow DAG with daily schedule, retries
-- [ ] Tests for transform and quality logic
+- [x] Fetch from Open-Meteo through a shared base class and registry
+- [ ] Transform responses into rows
+- [ ] Validation rules with clear errors
+- [ ] PostgreSQL schema and idempotent upserts
+- [ ] Tests for transform, validation and upserts
+- [ ] FastAPI app with `/health` and `/cities`
+- [ ] Weather endpoints with date-range queries
+- [ ] `POST /ingest/{source}` endpoint
 - [ ] `docker compose up` works from a clean clone
-- [ ] Second source added through the registry
-- [ ] CI (lint + tests) on every push
+- [ ] CI: lint and tests on every push
+- [ ] Scheduled ingestion (APScheduler)
 
 Tick a box only when it is true in the repo.
 
-## What I learned / trade-offs
+## What I learned
 
-<!-- Fill this in as you go. 3-5 honest bullets: what was hard, what you'd change, what you'd do at larger scale. Interviewers read this. -->
+_Filled in as the project grows._
 
 ## Author
 
-**Amirali Abbasi** · Java backend developer moving into data engineering
-Tehran, Iran · [GitHub](https://github.com/amiraliverse) · [LinkedIn](https://linkedin.com/in/amirali-abbasi) · [Portfolio](https://amiraliabbasi.ir)
+**Amirali Abbasi** · Backend Developer, Python & FastAPI
+[GitHub](https://github.com/amiralicv) · [LinkedIn](https://linkedin.com/in/amirali-abbasi) · [Portfolio](https://amiraliabbasi.ir)
